@@ -1,4 +1,5 @@
 const express = require("express");
+const ngrok = require("ngrok");
 const OpenTok = require("opentok");
 const config = require("./config");
 const app = express();
@@ -7,7 +8,6 @@ app.use(express.static(`${__dirname}/public`));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 const OT = new OpenTok(config.apiKey, config.apiSecret);
-const { serverUrl } = config;
 const Vonage = require("@vonage/server-sdk");
 const vonage = new Vonage({
   apiKey: config.sip.username,
@@ -16,6 +16,10 @@ const vonage = new Vonage({
   privateKey: config.sip.private_key_path,
 });
 
+/**
+ * dialOut is used to dial out from a video api session to the voice api
+ * @param {String} roomId
+ */
 function dialOut(roomId = null) {
   return new Promise((resolve, reject) => {
     console.log("entered roomid: ", roomId);
@@ -58,7 +62,6 @@ function dialOut(roomId = null) {
  * @param {String} sessionId
  * @param {String} sipTokenData
  */
-
 const generateToken = (sessionId, sipTokenData = "") =>
   OT.generateToken(sessionId, {
     role: "moderator",
@@ -68,7 +71,6 @@ const generateToken = (sessionId, sipTokenData = "") =>
 /**
  * generatePin is used to create a 4 digit pin
  */
-
 const generatePin = () => {
   const pin = Math.floor(Math.random() * 9000) + 1000;
   if (app.get(pin)) {
@@ -78,15 +80,13 @@ const generatePin = () => {
 };
 
 /**
-   * renderRoom is used to render the ejs template
-   * @param {Object} res
-   * @param {String} sessionId
-   * @param {String} token
-   * @param {String} roomId
-   * @param {Number} pinCode
-
-*/
-
+ * renderRoom is used to render the ejs template
+ * @param {Object} res
+ * @param {String} sessionId
+ * @param {String} token
+ * @param {String} roomId
+ * @param {Number} pinCode
+ */
 const renderRoom = (res, sessionId, token, roomId, pinCode) => {
   const { apiKey, conferenceNumber } = config;
   res.render("index.ejs", {
@@ -103,7 +103,6 @@ const renderRoom = (res, sessionId, token, roomId, pinCode) => {
  * setSipOptions is used to set properties for the OT.dial API call
  * @returns {Object}
  */
-
 const setSipOptions = () => ({
   auth: {
     username: config.sip.username,
@@ -116,7 +115,6 @@ const setSipOptions = () => ({
  * When the room/:roomId request is made, either a template is rendered is served with the
  * sessionid, token, pinCode, roomId, and apiKey.
  */
-
 app.get("/room/:roomId", (req, res) => {
   const { roomId } = req.params;
   let pinCode;
@@ -147,6 +145,10 @@ app.get("/room/:roomId", (req, res) => {
   }
 });
 
+/**
+ * This is the answer url that is called when an incoming caller calls.
+ * An NCCO is expected to be returned.
+ */
 app.get("/nexmo-answer", (req, res) => {
   const ncco = [];
   if (req.query["SipHeader_X-OpenTok-SessionId"]) {
@@ -161,16 +163,23 @@ app.get("/nexmo-answer", (req, res) => {
       {
         action: "talk",
         text: "Please enter a pin code to join the session",
+        bargeIn: true,
+        language: "en-GB",
+        style: 7,
       },
       {
         action: "input",
-        eventUrl: [`${serverUrl}/nexmo-dtmf`],
+        eventUrl: [`${app.get("NGROK_URL")}/nexmo-dtmf`],
       }
     );
   }
   res.json(ncco);
 });
 
+/**
+ * This is the default event url.
+ * NOTE: this is a POST, so please check in your application settings if this has been set to POST and not GET.
+ */
 app.post("/nexmo-dtmf", async (req, res) => {
   const { dtmf, msisdn } = req.body;
   console.log(`received pin entry from caller ${msisdn}: ${dtmf}`);
@@ -188,9 +197,11 @@ app.post("/nexmo-dtmf", async (req, res) => {
   // if session id was found and token created
   if (sessionId && token) {
     // dial out from the video session if pin is correctly entered first time
+    // but check if it has been dialed out once before - we only need 1 dial out from video to voice api
     const dialedOut = app.get(`${sessionId}-dialout-status`);
     if (dialedOut && dialedOut == true) {
-      // do not dial out after it has been done already, only connect
+      // do not dial out from video after it has been done once already
+      // only connect the user to the ongoing conversation
       const ncco = [
         {
           action: "conversation",
@@ -200,6 +211,8 @@ app.post("/nexmo-dtmf", async (req, res) => {
       ];
       res.json(ncco);
     } else {
+      // if there was not dialout yet, we have to initiate one from video api to voice api
+      // then after video api to voice api connection is established, we will connect the incoming caller to that ongoing conversation
       const roomId = app.get(`${sessionId}-room`);
       console.log("Room id for dialout: ", roomId);
       const result = await dialOut(roomId);
@@ -216,29 +229,37 @@ app.post("/nexmo-dtmf", async (req, res) => {
         ];
         res.json(ncco);
       } else {
-        // error fetching roomid from session id
+        // most likely error fetching roomid from session id
+        // ask for correct pin to loop
         const ncco = [
           {
             action: "talk",
             text: "Please enter the correct pin.",
+            bargeIn: true,
+            language: "en-GB",
+            style: 7,
           },
           {
             action: "input",
-            eventUrl: [`${serverUrl}/nexmo-dtmf`],
+            eventUrl: [`${app.get("NGROK_URL")}/nexmo-dtmf`],
           },
         ];
         res.json(ncco);
       }
     }
   } else {
+    // ask for correct pin as failover as well
     const ncco = [
       {
         action: "talk",
         text: "Not session was found for this pin. Please enter the correct pin.",
+        bargeIn: true,
+        language: "en-GB",
+        style: 7,
       },
       {
         action: "input",
-        eventUrl: [`${serverUrl}/nexmo-dtmf`],
+        eventUrl: [`${app.get("NGROK_URL")}/nexmo-dtmf`],
       },
     ];
     res.json(ncco);
@@ -260,17 +281,18 @@ app.all("/nexmo-events", (req, res) => {
         if (error) {
           console.error(error);
         } else {
-          console.log("Conversation info: ", resultConversation);
+          // filer for anyone left in the conversation
           let remainingMembers = resultConversation.members.filter(
             (mem) => mem.state === "JOINED"
           );
-          console.log("remainingMembers: ", JSON.stringify(remainingMembers));
+          // check if there is only one member left
+          // and check if it is the Video API to Voice API connection (e.g. it is using 0000000000 as caller id)
           if (
             remainingMembers.length == 1 &&
             remainingMembers[0]?.channel?.from?.type == "phone" &&
             remainingMembers[0]?.channel?.from?.number == "0000000000"
           ) {
-            // disconnect TB and remove from storage
+            // disconnect TB and remove connection info from internal app storage
             const sessionId = resultConversation.name;
             const connectionId = app.get(`connectionid-${sessionId}`);
             if (sessionId && connectionId) {
@@ -278,7 +300,6 @@ app.all("/nexmo-events", (req, res) => {
                 if (error) {
                   console.log("There was an error hanging up");
                 } else {
-                  //app.set(conferenceNumber + roomId, sipCall.connectionId);
                   app.set(`connectionid-${sessionId}`, null);
                   app.set(`${sessionId}-dialout-status`, null);
                   console.log("disconnect video sip call: Ok");
@@ -297,4 +318,75 @@ app.all("/nexmo-events", (req, res) => {
 });
 
 const port = process.env.PORT || "3000";
-app.listen(port, () => console.log(`listening on port ${port}`));
+app.listen(port, async () => {
+  console.log(`listening on port ${port}`);
+  const url = await ngrok.connect({ addr: port });
+  console.log(`ngrok url ${url}`);
+  app.set("NGROK_URL", url);
+  vonage.applications.update(
+    config.sip.app_id,
+    {
+      name: config.sip.app_name,
+      capabilities: {
+        voice: {
+          webhooks: {
+            answer_url: {
+              address: `${url}/nexmo-answer`,
+              http_method: "GET",
+            },
+            event_url: {
+              address: `${url}/nexmo-events`,
+              http_method: "POST",
+            },
+          },
+        },
+      },
+    },
+    (error, result) => {
+      if (error) {
+        console.error(
+          "Vonage Voice Application could not be updated: ",
+          error.body.title,
+          error.body.detail,
+          error.body.invalid_parameters
+        );
+      } else {
+        console.log("Vonage Voice Application updated: ");
+        console.log("App ID: ", result.id);
+        console.log("Name: ", result.name);
+        console.log(
+          `Answer URL: ${result.capabilities.voice.webhooks.answer_url.http_method} ${result.capabilities.voice.webhooks.answer_url.address}`
+        );
+        console.log(
+          `Event URL: ${result.capabilities.voice.webhooks.event_url.http_method} ${result.capabilities.voice.webhooks.event_url.address}`
+        );
+
+        vonage.number.update(
+          config.conferenceNumberCountryCode,
+          config.conferenceNumber,
+          {
+            app_id: config.sip.app_id,
+          },
+          (err, res) => {
+            if (err) {
+              console.error(
+                "Error linking conference number to app: ",
+                err.body
+              );
+            } else {
+              console.log(
+                "Linked conference number to app:",
+                res["error-code-label"],
+                "\n"
+              );
+
+              console.log(
+                `Go to the following url to test out conferencing: ${url}/room/test123`
+              );
+            }
+          }
+        );
+      }
+    }
+  );
+});

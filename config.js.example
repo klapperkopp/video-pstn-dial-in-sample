@@ -1,12 +1,14 @@
 module.exports = {
+  // ALL VALUES ARE REQUIRED
   apiKey: "API_KEY", // TokBox apiKey
   apiSecret: "API_SECRET", // TokBox apiSecret
   sip: {
     username: "API_KEY", // Nexmo apiKey
     password: "API_SECRET", // Nexmo apiSecret
     app_id: "aaaa-bbbb-cccc-dddd-eeee-ffff", // Nexmo app id from https://dashboard.nexmo.com/applications
+    app_name: "PSTN DIAL IN", // the name you want your app to have
     private_key_path: "./private.key", // private key file from app id's dashboard https://dashboard.nexmo.com/applications/<appid>
   },
   conferenceNumber: "YOUR_NUMBER_LINKED_TO_ABOVE_APP", // the Nexmo Virtual Number
-  serverUrl: "https://xxxxxxxxx.eu.ngrok.io", // your server URL, e.g. from ngrok
+  conferenceNumberCountryCode: "DE",
 };
