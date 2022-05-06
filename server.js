@@ -1,5 +1,5 @@
 const express = require("express");
-const ngrok = require("ngrok");
+const localtunnel = require("localtunnel");
 const OpenTok = require("opentok");
 const config = require("./config");
 const app = express();
@@ -169,7 +169,7 @@ app.get("/nexmo-answer", (req, res) => {
       },
       {
         action: "input",
-        eventUrl: [`${app.get("NGROK_URL")}/nexmo-dtmf`],
+        eventUrl: [`${app.get("LOCALTUNNEL_URL")}/nexmo-dtmf`],
       }
     );
   }
@@ -241,7 +241,7 @@ app.post("/nexmo-dtmf", async (req, res) => {
           },
           {
             action: "input",
-            eventUrl: [`${app.get("NGROK_URL")}/nexmo-dtmf`],
+            eventUrl: [`${app.get("LOCALTUNNEL_URL")}/nexmo-dtmf`],
           },
         ];
         res.json(ncco);
@@ -259,7 +259,7 @@ app.post("/nexmo-dtmf", async (req, res) => {
       },
       {
         action: "input",
-        eventUrl: [`${app.get("NGROK_URL")}/nexmo-dtmf`],
+        eventUrl: [`${app.get("LOCALTUNNEL_URL")}/nexmo-dtmf`],
       },
     ];
     res.json(ncco);
@@ -320,9 +320,9 @@ app.all("/nexmo-events", (req, res) => {
 const port = process.env.PORT || "3000";
 app.listen(port, async () => {
   console.log(`listening on port ${port}`);
-  const url = await ngrok.connect({ addr: port });
-  console.log(`ngrok url ${url}`);
-  app.set("NGROK_URL", url);
+  const tunnel = await localtunnel({ port });
+  console.log(`tunnel url ${tunnel.url}`);
+  app.set("LOCALTUNNEL_URL", tunnel.url);
   vonage.applications.update(
     config.sip.app_id,
     {
@@ -331,11 +331,11 @@ app.listen(port, async () => {
         voice: {
           webhooks: {
             answer_url: {
-              address: `${url}/nexmo-answer`,
+              address: `${tunnel.url}/nexmo-answer`,
               http_method: "GET",
             },
             event_url: {
-              address: `${url}/nexmo-events`,
+              address: `${tunnel.url}/nexmo-events`,
               http_method: "POST",
             },
           },
@@ -381,7 +381,7 @@ app.listen(port, async () => {
               );
 
               console.log(
-                `Go to the following url to test out conferencing: ${url}/room/test123`
+                `Go to the following url to test out conferencing: ${tunnel.url}/room/test123`
               );
             }
           }
