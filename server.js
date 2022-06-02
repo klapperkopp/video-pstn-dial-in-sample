@@ -289,8 +289,8 @@ app.all("/nexmo-events", (req, res) => {
           // and check if it is the Video API to Voice API connection (e.g. it is using 0000000000 as caller id)
           if (
             remainingMembers.length == 1 &&
-            remainingMembers[0]?.channel?.from?.type == "phone" &&
-            remainingMembers[0]?.channel?.from?.number == "0000000000"
+            remainingMembers[0].channel.from.type == "phone" &&
+            remainingMembers[0].channel.from.number == "0000000000"
           ) {
             // disconnect TB and remove connection info from internal app storage
             const sessionId = resultConversation.name;
