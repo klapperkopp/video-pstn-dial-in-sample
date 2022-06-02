@@ -1,0 +1,45 @@
+{
+    project(projectId: 47496621) {
+      projectData(start: "2022-05-01T00:00:00.000Z", end: "2022-05-13T23:59:00.000Z") {
+        resources {
+          usage {
+            streamedPublishedMinutes
+            streamedSubscribedMinutes
+            sipUserMinutes
+          }
+        }
+      }
+      sessionData {
+        sessions(sessionIds: ["11_MX40NzQ5NjYyMX5-MTY1MjQ0MDk2MTQyOH5oWXNzVlNzVlcxK1NUT0d2L2h4S29VTVl-fg"]) {
+          totalCount
+          resources {
+            sessionId
+            mediaMode
+            publisherMinutes
+            subscriberMinutes
+            meetings {
+              resources {
+                publisherMinutes
+                subscriberMinutes
+                connections {
+                  totalCount
+                  resources {
+                    connectionId
+                    createdAt
+                    destroyedAt
+                    browser
+                    sdkType
+                    sdkVersion
+                    country
+                    region
+                    city
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  

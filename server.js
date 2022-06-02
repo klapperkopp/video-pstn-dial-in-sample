@@ -51,6 +51,14 @@ function dialOut(roomId = null) {
         console.log("sip call created: ", sipCall);
         //app.set(conferenceNumber + roomId, sipCall.connectionId);
         app.set(`connectionid-${sessionId}`, sipCall.connectionId);
+        OT.signal(
+          sessionId,
+          null,
+          { type: "sipVideoOut", data: { sipCall } },
+          function (error) {
+            if (error) return console.log("error:", error);
+          }
+        );
         resolve({ status: 200, type: "json", json: sipCall });
       }
     });
@@ -96,6 +104,7 @@ const renderRoom = (res, sessionId, token, roomId, pinCode) => {
     roomId,
     pinCode,
     conferenceNumber,
+    localtunelUrl: app.get("LOCALTUNNEL_URL"),
   });
 };
 
@@ -121,7 +130,6 @@ app.get("/room/:roomId", (req, res) => {
   if (app.get(roomId)) {
     const sessionId = app.get(roomId);
     const token = generateToken(sessionId);
-    console.log(token === "92cbf1ac-3cd6-4548-881b-60bc6f30b749");
     pinCode = app.get(sessionId);
     renderRoom(res, sessionId, token, roomId, pinCode);
   } else {
@@ -192,6 +200,15 @@ app.post("/nexmo-dtmf", async (req, res) => {
   // if the pin is wrong, there is no stored session id
   if (sessionId) {
     token = generateToken(sessionId);
+
+    OT.signal(
+      sessionId,
+      null,
+      { type: "callType", data: { callType: "dialin", from: msisdn } },
+      function (error) {
+        if (error) return console.log("error:", error);
+      }
+    );
   }
 
   // if session id was found and token created
@@ -266,9 +283,78 @@ app.post("/nexmo-dtmf", async (req, res) => {
   }
 });
 
+app.all("/tokbox-sip-events", (req, res) => {
+  console.log(`Opentok SIP Event received: `, req.body);
+  res.status(200).send();
+});
+
+app.post("/dialout", (req, res) => {
+  console.log(`dialout request received: `, req.body);
+  const { dialoutNumber, sessionId } = req.body;
+  const sipTokenData = `{"sip":true, "role":"client", "name":"'${sessionId}-dialout'"}`;
+  const token = generateToken(sessionId, sipTokenData);
+  const options = setSipOptions();
+  const sipUri = `sip:${dialoutNumber}@sip.nexmo.com;transport=tls`;
+  console.log("Dialing out to: ", sipUri);
+  OT.dial(sessionId, token, sipUri, options, (error, sipCall) => {
+    if (error) {
+      console.error("Sip call failed: ", error);
+      res.status(500).json({ error });
+    } else {
+      console.log("Outbound SIP Call created: ", sipCall);
+      res.status(200).json({ ...sipCall });
+    }
+  });
+});
+
+app.post("/video-session-callbacks", (req, res) => {
+  console.log("Video session callback: ", req.body);
+  res.status(200).send("OK");
+});
+
 // this endpoint receives call status events
 app.all("/nexmo-events", (req, res) => {
-  console.log("Call status update: ", req.body);
+  if (req.body.headers && req.body.headers["X-OpenTok-SessionId"]) {
+    console.log(
+      `Nexmo Call status update for Opentok session ${req.body.headers["X-OpenTok-SessionId"]}: `,
+      req.body
+    );
+    if (req.body.status == "completed") {
+      OT.signal(
+        req.body.headers["X-OpenTok-SessionId"],
+        null,
+        {
+          type: "SipVideoInDuration",
+          data: {
+            SipVideoInDuration: req.body.duration,
+            price: req.body.price,
+          },
+        },
+        function (error) {
+          if (error) return console.log("error:", error);
+        }
+      );
+    }
+  } else {
+    console.log(`Nexmo Call status update: `, req.body);
+    if (req.body.status == "completed") {
+      let foundSessionId = ""; // TODO find session id by call uuid, this would be inbound pstn leg or outbound pstn leg ending
+      OT.signal(
+        foundSessionId,
+        null,
+        {
+          type: "SipVideoInDuration",
+          data: {
+            SipVideoInDuration: req.body.duration,
+            price: req.body.price,
+          },
+        },
+        function (error) {
+          if (error) return console.log("error:", error);
+        }
+      );
+    }
+  }
 
   // if inbound event is user ending a call
   // a) check if conversation contains more than tokbox user
