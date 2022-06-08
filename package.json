@@ -20,5 +20,6 @@
     "express-ws": "^5.0.2",
     "localtunnel": "^2.0.2",
     "opentok": "^2.8.1"
-  }
+  },
+  "devDependencies": {}
 }

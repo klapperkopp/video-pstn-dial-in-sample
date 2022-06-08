@@ -9,6 +9,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 const OT = new OpenTok(config.apiKey, config.apiSecret);
 const Vonage = require("@vonage/server-sdk");
+const { default: axios } = require("axios");
 const vonage = new Vonage({
   apiKey: config.sip.username,
   apiSecret: config.sip.password,
@@ -118,6 +119,7 @@ const setSipOptions = () => ({
     password: config.sip.password,
   },
   secure: false,
+  from: config.conferenceNumber,
 });
 
 /**
@@ -285,13 +287,57 @@ app.post("/nexmo-dtmf", async (req, res) => {
 
 app.all("/tokbox-sip-events", (req, res) => {
   console.log(`Opentok SIP Event received: `, req.body);
-  res.status(200).send();
+  if (req.body.sessionId && req.body.call && req.body.call.id) {
+    switch (req.body.event) {
+      case "callCreated":
+        OT.signal(req.body.sessionId, null, {
+          type: "callCreated",
+          data: { sessionId: req.body.sessionId, call: req.body.call },
+        });
+        res.status(200).send();
+        break;
+      case "callDestroyed":
+        axios
+          .get(
+            `https://api.nexmo.com/v2/reports/records?account_id=${config.sip.username}&product=VOICE-CALL&direction=outbound&id=${req.body.call.id}`,
+            {
+              auth: {
+                username: `${config.sip.username}`,
+                password: `${config.sip.password}`,
+              },
+            }
+          )
+          .then((response) => {
+            console.log("axios response: ", JSON.stringify(response.data));
+            OT.signal(req.body.sessionId, null, {
+              type: "callDestroyed",
+              data: {
+                sessionId: req.body.sessionId,
+                call: req.body.call,
+                reportsData: response.data,
+              },
+            });
+            res.status(200).send();
+          })
+          .catch((e) => {
+            console.error("axios error: ", e);
+            res.status(200).send();
+          });
+
+        break;
+      default:
+        res.status(200).send();
+        break;
+    }
+  } else {
+    res.status(200).send();
+  }
 });
 
 app.post("/dialout", (req, res) => {
   console.log(`dialout request received: `, req.body);
   const { dialoutNumber, sessionId } = req.body;
-  const sipTokenData = `{"sip":true, "role":"client", "name":"'${sessionId}-dialout'"}`;
+  const sipTokenData = `{"sip":true, "role":"client", "name":"'${sessionId}-dialout'", "callee": "${dialoutNumber}"}`;
   const token = generateToken(sessionId, sipTokenData);
   const options = setSipOptions();
   const sipUri = `sip:${dialoutNumber}@sip.nexmo.com;transport=tls`;
@@ -309,6 +355,83 @@ app.post("/dialout", (req, res) => {
 
 app.post("/video-session-callbacks", (req, res) => {
   console.log("Video session callback: ", req.body);
+  if (req.body.connection) {
+    const connectionData = req.body.connection.data
+      ? JSON.parse(req.body.connection.data)
+      : { sip: null };
+    const { sip } = connectionData;
+
+    // store info about created sip connection
+    if (sip === true) {
+      switch (req.body.event) {
+        case "streamCreated":
+          console.log("sip video streamCreated");
+          // save stream info
+          app.set(`SIP-Video-${req.body.sessionId}-${req.body.connection.id}`, {
+            ...req.body,
+            connectionData,
+          });
+
+          // send info to frontend for UI update
+          let sent = OT.signal(
+            req.body.sessionId,
+            null,
+            {
+              type: "SipVideoConnectionCreated",
+              data: {
+                ...req.body.connection,
+                connectionData,
+              },
+            },
+            function (error) {
+              if (error) return console.log("error:", error);
+            }
+          );
+          console.log("sent signal: ", sent);
+          break;
+        case "streamDestroyed":
+          console.log("sip video streamDestroyed");
+          if (sip === true) {
+            // check stream info
+            const existingConnectionInfo = app.get(
+              `SIP-Video-${req.body.sessionId}-${req.body.connection.id}`
+            );
+            console.log(
+              `existingConnectionInfo: ${JSON.stringify(
+                existingConnectionInfo
+              )}`
+            );
+            // calculate length of sip video dialout session
+            const sessionLengthMs =
+              req.body.timestamp - existingConnectionInfo.connection.createdAt;
+            console.log(
+              "Video session length in seconds: ",
+              sessionLengthMs / 1000
+            );
+            // send info to frontend for UI update
+            OT.signal(
+              req.body.sessionId,
+              null,
+              {
+                type: "SipVideoConnectionDestroyed",
+                data: {
+                  ...req.body.connection,
+                  data: connectionData,
+                  lengthSeconds: sessionLengthMs / 1000,
+                },
+              },
+              function (error) {
+                if (error) return console.log("error:", error);
+              }
+            );
+          }
+
+          break;
+        default:
+          break;
+      }
+    }
+  }
   res.status(200).send("OK");
 });
 
